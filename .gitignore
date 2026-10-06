@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.pdb
+publish/
+artifacts/
+TestResults/
+work/
+*.exe
+*.zip
