@@ -27,6 +27,12 @@ public partial class MainWindow : Window
     private string? audioError;
     private readonly List<int> registeredKeys = [];
     private IntPtr handle;
+    private bool miniPointerHeld, miniDragging;
+    private Point miniPressPoint;
+    private NativeRect miniPressBounds;
+    private DpiScale miniPressDpi;
+    private Button? miniPressedButton;
+    private Cursor? previousDragCursor;
     private static readonly Brush Mint = new SolidColorBrush(Color.FromRgb(123, 228, 192));
     private static readonly Brush Dim = new SolidColorBrush(Color.FromRgb(53, 66, 89));
     private static readonly string SettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MiniMetro", "settings.json");
@@ -145,6 +151,7 @@ public partial class MainWindow : Window
     private void SetMini(bool value)
     {
         if (mini == value) return;
+        EndMiniGesture(false);
         CommitTempo();
         if (value)
         {
@@ -164,11 +171,62 @@ public partial class MainWindow : Window
         }
         SaveSettings();
     }
-    private void DragMini(object sender, MouseButtonEventArgs e)
+    private void MiniPointerDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount == 2) { SetMini(false); return; }
-        try { DragMove(); } catch { }
-        ClampToMonitor(); saved.MiniX = Left; saved.MiniY = Top; SaveSettings();
+        if (!mini) return;
+        if (e.ClickCount == 2 && FindParent<Border>(e.OriginalSource as DependencyObject) == MiniGrip)
+        { e.Handled = true; SetMini(false); return; }
+        if (BeginMiniGesture(PointToScreen(e.GetPosition(this)), FindParent<Button>(e.OriginalSource as DependencyObject)))
+            e.Handled = true;
+    }
+    private bool BeginMiniGesture(Point screenPoint, Button? button)
+    {
+        EndMiniGesture(false);
+        if (!mini || !GetWindowRect(handle, out miniPressBounds) || !CaptureMouse()) return false;
+        miniPressPoint = screenPoint; miniPressDpi = VisualTreeHelper.GetDpi(this);
+        miniPressedButton = button; miniPointerHeld = true; miniDragging = false;
+        previousDragCursor = Mouse.OverrideCursor;
+        return true;
+    }
+    private void MiniPointerMove(object sender, MouseEventArgs e)
+    {
+        if (!miniPointerHeld) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { EndMiniGesture(false); return; }
+        MoveMiniGesture(PointToScreen(e.GetPosition(this))); e.Handled = true;
+    }
+    private void MoveMiniGesture(Point screenPoint)
+    {
+        if (!miniPointerHeld) return;
+        Vector delta = screenPoint - miniPressPoint;
+        if (!miniDragging && Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance * miniPressDpi.DpiScaleX
+            && Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance * miniPressDpi.DpiScaleY) return;
+        miniDragging = true; Mouse.OverrideCursor = Cursors.SizeAll;
+        // Use screen pixels so the pointer remains anchored while crossing monitors.
+        SetWindowPos(handle, IntPtr.Zero, miniPressBounds.Left + (int)Math.Round(delta.X),
+            miniPressBounds.Top + (int)Math.Round(delta.Y), 0, 0, 0x0015); // no size, z-order or activation change
+    }
+    private void MiniPointerUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!miniPointerHeld) return;
+        // Include movement since the last mouse-move event before deciding whether to click.
+        MoveMiniGesture(PointToScreen(e.GetPosition(this)));
+        Button? releasedButton = FindParent<Button>(InputHitTest(e.GetPosition(this)) as DependencyObject);
+        e.Handled = true; EndMiniGesture(releasedButton == miniPressedButton);
+    }
+    private void EndMiniGesture(bool activateButton)
+    {
+        if (!miniPointerHeld) return;
+        bool dragged = miniDragging; Button? button = miniPressedButton;
+        miniPointerHeld = false; miniDragging = false; miniPressedButton = null;
+        Mouse.OverrideCursor = previousDragCursor;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        if (dragged) { ClampToMonitor(); SaveSettings(); }
+        else if (activateButton && button?.IsEnabled == true)
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+    }
+    private void MiniCaptureLost(object sender, MouseEventArgs e)
+    {
+        if (miniPointerHeld && !IsMouseCaptured) EndMiniGesture(false);
     }
     private void ResetCornerClick(object sender, RoutedEventArgs e) { MoveToCorner(); saved.MiniX = Left; saved.MiniY = Top; SaveSettings(); }
     private void MiniMuteClick(object sender, RoutedEventArgs e)
@@ -181,9 +239,10 @@ public partial class MainWindow : Window
         ChangeTempo(synth.Settings.Bpm + Math.Sign(e.Delta) * Step); e.Handled = true;
     }
     private static T? FindParent<T>(DependencyObject? obj) where T : DependencyObject
-    { while (obj != null) { if (obj is T found) return found; obj = VisualTreeHelper.GetParent(obj); } return null; }
+    { while (obj != null) { if (obj is T found) return found; obj = obj is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(obj) : LogicalTreeHelper.GetParent(obj); } return null; }
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && miniPointerHeld) { EndMiniGesture(false); e.Handled = true; return; }
         if (Keyboard.FocusedElement is TextBox or ComboBox or ComboBoxItem or Slider) return;
         if (e.Key == Key.Space) { TogglePlay(); e.Handled = true; }
         else if (e.Key is Key.Up or Key.Add or Key.OemPlus) { ChangeTempo(synth.Settings.Bpm + Step); e.Handled = true; }
@@ -204,6 +263,7 @@ public partial class MainWindow : Window
     }
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        EndMiniGesture(false);
         timer.Stop(); SaveSettings();
         foreach (int id in registeredKeys) UnregisterHotKey(handle, id);
         audio?.Dispose();
@@ -220,7 +280,7 @@ public partial class MainWindow : Window
     {
         // A native caption hit lets Windows drag the whole title region, including
         // text and empty space, without depending on a WPF event's original source.
-        if (msg == 0x0084 && !mini && TitleDragArea.IsVisible)
+        if (msg == 0x0084 && !mini && TitleDragArea.IsVisible && PresentationSource.FromVisual(TitleDragArea) != null)
         {
             long coordinates = lParam.ToInt64();
             var screenPoint = new Point((short)(coordinates & 0xFFFF), (short)((coordinates >> 16) & 0xFFFF));
@@ -261,6 +321,8 @@ public partial class MainWindow : Window
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct MonitorInfo { public int Size; public NativeRect Monitor, Work; public uint Flags; }
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out NativeRect rectangle);
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(NativePoint point, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);

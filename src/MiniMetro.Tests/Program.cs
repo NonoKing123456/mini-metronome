@@ -23,7 +23,8 @@ class Program
         try
         {
             TestRhythm(); TestNativeAudio();
-            var app = new App(); app.InitializeComponent(); app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            app.Resources = new ResourceDictionary { Source = new Uri("pack://application:,,,/小条节拍器;component/Resources.xaml") };
             Directory.CreateDirectory(Path.GetDirectoryName(settings)!);
             File.WriteAllText(settings, "{}");
             window = new MainWindow { ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = 0 };
@@ -55,6 +56,7 @@ class Program
             Check(window.Width == 180 && window.Height == 30 && window.Topmost, "Mini bar is 180 x 30 and always on top");
             Check(((FrameworkElement)window.FindName("FullPanel")).Visibility == Visibility.Collapsed, "Mini mode hides full controls");
             Render(window, "mini-preview.png");
+            TestMiniGestures(window, synth, settings);
             var video = new Window { Title = "Fullscreen overlay integration test", WindowStyle = WindowStyle.None, WindowState = WindowState.Maximized, Background = Brushes.Black, ShowInTaskbar = false };
             try
             {
@@ -95,6 +97,62 @@ class Program
         }
     }
     private static void Invoke(MainWindow window, string name, params object[] args) => typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
+    private static void TestMiniGestures(MainWindow window, BeatSynth synth, string settings)
+    {
+        foreach (string name in new[] { "MiniGrip", "MiniPlay", "MiniMinus", "MiniBpm", "MiniPlus", "MiniExpand", "MiniPulse", "MiniPanel" })
+        {
+            window.Left = 120; window.Top = 120; window.UpdateLayout();
+            var element = (FrameworkElement)window.FindName(name);
+            var down = new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, System.Windows.Input.MouseButton.Left)
+            { RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent, Source = element };
+            window.RaiseEvent(down);
+            Check(down.Handled && window.IsMouseCaptured, name + " starts the shared pointer gesture");
+            var start = (Point)typeof(MainWindow).GetField("miniPressPoint", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            double oldLeft = window.Left, oldTop = window.Top;
+            int bpm = synth.Settings.Bpm; bool playing = synth.Settings.Playing;
+            Invoke(window, "MoveMiniGesture", new Point(start.X + 36, start.Y + 24));
+            Invoke(window, "EndMiniGesture", true);
+            Check(window.Left > oldLeft + 10 && window.Top > oldTop + 10, name + " drag moves the native window");
+            Check(synth.Settings.Bpm == bpm && synth.Settings.Playing == playing && window.Width == 180, name + " drag suppresses the button click");
+            Check(!window.IsMouseCaptured && window.Topmost, name + " releases capture and preserves topmost");
+        }
+        foreach (string name in new[] { "MiniMinus", "MiniPlus", "MiniPlay" })
+        {
+            var button = (Button)window.FindName(name);
+            int bpm = synth.Settings.Bpm; bool playing = synth.Settings.Playing;
+            Invoke(window, "BeginMiniGesture", new Point(200, 200), button);
+            Invoke(window, "MoveMiniGesture", new Point(200.5, 200.5));
+            Invoke(window, "EndMiniGesture", true);
+            Check(name == "MiniPlay" ? synth.Settings.Playing != playing : synth.Settings.Bpm == bpm + (name == "MiniPlus" ? 1 : -1), name + " slight pointer jitter still produces one click");
+        }
+        synth.Settings = synth.Settings with { Playing = false };
+        Invoke(window, "SyncButtons");
+        var play = (Button)window.FindName("MiniPlay");
+        Invoke(window, "BeginMiniGesture", new Point(200, 200), play);
+        Invoke(window, "EndMiniGesture", false);
+        Check(!synth.Settings.Playing, "Releasing outside a button cancels its click");
+        Invoke(window, "BeginMiniGesture", new Point(200, 200), play);
+        window.ReleaseMouseCapture();
+        Invoke(window, "EndMiniGesture", true);
+        Check(!synth.Settings.Playing && !window.IsMouseCaptured, "Lost capture cancels clicks and clears the gesture");
+        Invoke(window, "BeginMiniGesture", new Point(200, 200), play);
+        Invoke(window, "MoveMiniGesture", new Point(236, 224));
+        Invoke(window, "MoveMiniGesture", new Point(200, 200));
+        Invoke(window, "EndMiniGesture", true);
+        Check(!synth.Settings.Playing, "Dragging away and back does not become a click");
+        using (var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(settings)))
+            Check(Math.Abs(json.RootElement.GetProperty("MiniX").GetDouble() - window.Left) < 1, "Dragged position is saved");
+        var bpmButton = (Button)window.FindName("MiniBpm");
+        Invoke(window, "BeginMiniGesture", new Point(200, 200), bpmButton);
+        Invoke(window, "EndMiniGesture", true);
+        Check(window.Width == 430, "BPM single click still expands for editing");
+        Invoke(window, "SetMini", true);
+        var expand = (Button)window.FindName("MiniExpand");
+        Invoke(window, "BeginMiniGesture", new Point(200, 200), expand);
+        Invoke(window, "EndMiniGesture", true);
+        Check(window.Width == 430, "Expand single click still opens the full panel");
+        Invoke(window, "SetMini", true);
+    }
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     private static int NativeHit(Window window, FrameworkElement element, Point local)
