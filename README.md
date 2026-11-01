@@ -12,7 +12,7 @@
 - **节奏设置**：20–300 BPM、每小节 1–12 拍、每拍 1/2/3/4 细分、首拍重音。
 - **声音**：木质、清脆、电子三种音色；独立音量和静音。
 - **敲击测速**：以目标节奏连续点击至少 3 次，自动计算 BPM。
-- **全局快捷键**：Ctrl + Alt + 空格开关，↑ / ↓ 调速，M 切换窗口模式。
+- **全局快捷键**：Ctrl + Alt + 空格开关，Ctrl + Alt + ↑ / ↓ 调速，Ctrl + Alt + M 切换窗口模式。
 - 记住参数与小条位置，下次打开时不自动发声。完全本地运行。
 
 窗口尺寸使用 Windows 的逻辑像素，会随系统显示缩放比例变化。
@@ -21,7 +21,7 @@
 
 ## 使用
 
-从仓库的 **Releases** 下载 `MiniMetronome-v1.2-win-x64.exe`，退出旧版后双击运行。Windows 64 位免安装版，无需另装 .NET 运行环境。
+从仓库的 [Releases](https://github.com/NonoKing123456/mini-metronome/releases) 下载 `MiniMetronome-v1.2-win-x64.exe`，退出旧版后双击运行。Windows 64 位免安装版，无需另装 .NET 运行环境。
 
 详细操作见 [使用说明](docs/usage.md)。
 
@@ -62,3 +62,12 @@ src/MiniMetro/          桌面程序
 src/MiniMetro.Tests/    自动检查
 docs/                  使用说明与界面预览
 ```
+
+
+## 项目维护与支持
+
+[开发与验证](docs/DEVELOPMENT.md) · [常见问题](docs/FAQ.md) · [贡献说明](CONTRIBUTING.md) · [安全报告](SECURITY.md)
+
+问题和功能建议请使用 [Issues](https://github.com/NonoKing123456/mini-metronome/issues) 中的模板，注明版本、系统和复现步骤。不要用本机个人数据作为公开复现附件。
+
+项目源码目前未单独声明开源许可证；已有第三方资源继续按其各自许可使用。
